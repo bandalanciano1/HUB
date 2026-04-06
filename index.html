@@ -8,30 +8,35 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; }
-        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.3); }
+        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); }
     </style> 
 </head>
 <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
 
-        // --- CONFIGURAZIONE ---
+        // --- CONFIGURAZIONE SPREADSHEET ---
         const SPREADSHEET_ID = '1fSkpwqDJdoc_7IY1pkTtlhsbUIt-OdiY7Wrh0B0VXSE';
         const CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=0`;
+        const AUTO_REFRESH_TIME = 60000; 
 
-        // Indici Colonne CSV (Base 0)
+        // Mappatura Colonne (Base 0)
+        const COL_DATA = 0;       // A
         const COL_NOMINATIVO = 1; // B
-        const COL_PASSWORD = 2;   // C
-        const COL_EMAIL = 3;      // D
+        const COL_PASSWORD = 2;   // C <--- PASSWORD
+        const COL_EMAIL = 3;      // D <--- EMAIL
         const COL_NOTE = 4;       // E
         const COL_PREZZO = 5;     // F
         const COL_LUOGO = 6;      // G
+        const COL_SALDATO = 7;    // H (TRUE/FALSE o VERO/FALSO)
         const COL_ACCONTO = 8;    // I
 
         function App() {
@@ -43,9 +48,10 @@
             const [error, setError] = useState(null);
             const [allData, setAllData] = useState([]);
             const [userData, setUserData] = useState(null);
-            const [view, setView] = useState('dashboard'); // 'dashboard' o 'details'
+            const [view, setView] = useState('dashboard');
+            const [filterSearch, setFilterSearch] = useState('');
+            const [lastSync, setLastSync] = useState(null);
 
-            // Effetto "Ricordami" al caricamento
             useEffect(() => {
                 const savedEmail = localStorage.getItem('artist_hub_email');
                 const savedPass = localStorage.getItem('artist_hub_pass');
@@ -54,7 +60,10 @@
                     setPasswordInput(savedPass);
                     setRememberMe(true);
                 }
+                
                 fetchCSV();
+                const interval = setInterval(fetchCSV, AUTO_REFRESH_TIME);
+                return () => clearInterval(interval);
             }, []);
 
             const fetchCSV = async () => {
@@ -63,9 +72,11 @@
                     const text = await response.text();
                     const parsed = parseCSV(text);
                     setAllData(parsed);
+                    setLastSync(new Date().toLocaleTimeString());
                     setLoading(false);
                 } catch (e) {
-                    setError("Errore nel caricamento dei dati.");
+                    console.error("Errore sincronizzazione:", e);
+                    setError("Errore di connessione al database.");
                     setLoading(false);
                 }
             };
@@ -82,9 +93,10 @@
                         else current += char;
                     }
                     values.push(current.trim());
+                    // Pulizia profonda di ogni valore da apici e spazi bianchi
                     return {
                         _rowIndex: index,
-                        _rawValues: values.map(v => v.replace(/^"|"$/g, '').trim())
+                        _rawValues: values.map(v => v.replace(/^["']|["']$/g, '').trim())
                     };
                 });
             };
@@ -95,188 +107,212 @@
                 return parseFloat(cleanVal) || 0;
             };
 
-            const handleLogin = (e) => {
-                e.preventDefault();
-                const email = loginInput.trim().toLowerCase();
-                const pass = passwordInput.trim();
-
-                const userRows = allData.filter(row => 
-                    row._rawValues[COL_EMAIL]?.toLowerCase() === email && 
-                    row._rawValues[COL_PASSWORD] === pass
-                );
-
-                if (userRows.length > 0) {
-                    // Gestione Ricordami
-                    if (rememberMe) {
-                        localStorage.setItem('artist_hub_email', email);
-                        localStorage.setItem('artist_hub_pass', pass);
-                    } else {
-                        localStorage.removeItem('artist_hub_email');
-                        localStorage.removeItem('artist_hub_pass');
-                    }
-
-                    processUserData(userRows);
-                    setIsLoggedIn(true);
-                } else {
-                    setError("Credenziali non corrette.");
-                }
-            };
-
-            const processUserData = (rows) => {
+            const processUserData = useCallback((rows) => {
+                if (!rows || rows.length === 0) return;
+                
                 let totalLordo = 0;
                 let totalAcconti = 0;
+                let daPercepire = 0;
 
                 const records = rows.map(row => {
                     const prezzo = cleanNumber(row._rawValues[COL_PREZZO]);
                     const acconto = cleanNumber(row._rawValues[COL_ACCONTO]);
+                    const rawSaldato = row._rawValues[COL_SALDATO]?.toUpperCase();
+                    const isSaldato = rawSaldato === 'VERO' || rawSaldato === 'TRUE';
+                    
                     totalLordo += prezzo;
                     totalAcconti += acconto;
 
+                    const nettoDovuto = prezzo - acconto;
+                    if (!isSaldato) daPercepire += nettoDovuto;
+
                     return {
+                        data: row._rawValues[COL_DATA] || 'N/D',
                         localita: row._rawValues[COL_LUOGO] || 'N/D',
                         nota: row._rawValues[COL_NOTE] || '',
                         prezzo,
                         acconto,
-                        netto: prezzo - acconto
+                        netto: nettoDovuto,
+                        saldato: isSaldato
                     };
                 });
+
+                records.sort((a, b) => b.data.localeCompare(a.data));
 
                 setUserData({
                     nome: rows[0]._rawValues[COL_NOMINATIVO],
                     email: rows[0]._rawValues[COL_EMAIL],
                     lordo: totalLordo,
                     acconti: totalAcconti,
-                    netto: totalLordo - totalAcconti,
+                    netto: daPercepire,
                     records,
                     prestazioni: rows.length,
-                    noteGlobali: [...new Set(records.map(r => r.nota).filter(n => n && n !== '-'))]
+                    noteGlobali: [...new Set(records.map(r => r.nota).filter(n => n && n !== '-' && n !== ''))]
                 });
+            }, []);
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                setError(null);
+                
+                const emailInput = loginInput.trim().toLowerCase();
+                const passInput = passwordInput.trim();
+
+                // Cerchiamo l'utente verificando Email (Col D) e Password (Col C)
+                const userRows = allData.filter(row => {
+                    const dbEmail = (row._rawValues[COL_EMAIL] || "").toLowerCase();
+                    const dbPass = row._rawValues[COL_PASSWORD] || "";
+                    return dbEmail === emailInput && dbPass === passInput;
+                });
+
+                if (userRows.length > 0) {
+                    if (rememberMe) {
+                        localStorage.setItem('artist_hub_email', emailInput);
+                        localStorage.setItem('artist_hub_pass', passInput);
+                    } else {
+                        localStorage.removeItem('artist_hub_email');
+                        localStorage.removeItem('artist_hub_pass');
+                    }
+                    processUserData(userRows);
+                    setIsLoggedIn(true);
+                } else {
+                    setError("Email o Password errati. Verifica i dati nel foglio.");
+                }
             };
 
             const formatEuro = (num) => num.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
 
-            if (loading) return (
+            if (loading && allData.length === 0) return (
                 <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-                    <p className="mt-4 text-emerald-500 font-bold text-[10px] tracking-widest uppercase">Sincronizzazione...</p>
+                    <div className="w-12 h-12 border-4 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin"></div>
+                    <p className="mt-4 text-emerald-500 font-bold text-[10px] tracking-widest uppercase">Connessione al Database...</p>
                 </div>
             );
 
             if (!isLoggedIn) return (
                 <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-[100px] -mr-48 -mt-48"></div>
-                    <div className="max-w-md w-full bg-slate-900/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/5 shadow-2xl relative z-10 animate-fade-in">
-                        <div className="text-center mb-8">
-                            <h1 className="text-2xl font-black text-white uppercase tracking-tight">Artist Hub</h1>
-                            <p className="text-slate-400 text-xs mt-2">Area Riservata Musicisti</p>
+                    <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px]"></div>
+                    <div className="max-w-md w-full bg-slate-900/40 backdrop-blur-2xl p-10 rounded-[2.5rem] border border-white/5 shadow-2xl relative z-10 animate-fade-in">
+                        <div className="text-center mb-10">
+                            <div className="inline-flex p-3 bg-emerald-500/10 rounded-2xl mb-4 border border-emerald-500/20">
+                                <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-10.726A10.023 10.023 0 002 10.75c0 1.258.232 2.463.654 3.576" /></svg>
+                            </div>
+                            <h1 className="text-3xl font-black text-white uppercase tracking-tighter">Artist Hub</h1>
+                            <p className="text-slate-500 text-[10px] font-bold mt-2 uppercase tracking-[0.2em]">Accedi con Email (D) e Pass (C)</p>
                         </div>
-                        <form onSubmit={handleLogin} className="space-y-5">
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-2">Email</label>
-                                <input type="email" className="w-full mt-1 p-4 bg-slate-800/50 border border-white/5 rounded-2xl text-white font-bold outline-none focus:border-emerald-500/50 transition-all" value={loginInput} onChange={e=>setLoginInput(e.target.value)} required />
+                        
+                        <form onSubmit={handleLogin} className="space-y-6">
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email</label>
+                                <input type="email" placeholder="esempio@email.it" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={loginInput} onChange={e=>setLoginInput(e.target.value)} required />
                             </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-2">Password</label>
-                                <input type="password" className="w-full mt-1 p-4 bg-slate-800/50 border border-white/5 rounded-2xl text-white font-bold outline-none focus:border-emerald-500/50 transition-all" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} required />
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Password</label>
+                                <input type="password" placeholder="••••••••" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} required />
                             </div>
-                            <div className="flex items-center gap-3 px-2">
+                            
+                            <div className="flex items-center gap-3 px-1">
                                 <div onClick={()=>setRememberMe(!rememberMe)} className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center cursor-pointer transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
-                                    {rememberMe && <div className="w-2 h-2 bg-slate-900 rounded-full"></div>}
+                                    {rememberMe && <svg className="w-4 h-4 text-slate-900" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
                                 </div>
-                                <span className="text-xs text-slate-400 font-bold uppercase tracking-tighter cursor-pointer" onClick={()=>setRememberMe(!rememberMe)}>Ricordami su questo telefono</span>
+                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight cursor-pointer" onClick={()=>setRememberMe(!rememberMe)}>Resta collegato</span>
                             </div>
-                            {error && <p className="text-red-400 text-[10px] font-bold text-center uppercase">{error}</p>}
-                            <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-widest text-slate-900 shadow-lg shadow-emerald-500/20 active:scale-95 transition-transform">Entra</button>
+
+                            {error && <div className="bg-red-500/10 border border-red-500/20 py-3 rounded-xl"><p className="text-red-400 text-[10px] font-black text-center uppercase tracking-wider">{error}</p></div>}
+                            
+                            <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] text-slate-950 hover:bg-emerald-400 transition-all">Entra</button>
                         </form>
                     </div>
                 </div>
             );
 
             if (view === 'details') return (
-                <div className="min-h-screen bg-slate-50 pb-12 animate-fade-in">
-                    <nav className="bg-white border-b p-4 flex justify-between items-center sticky top-0 z-50">
-                        <button onClick={()=>setView('dashboard')} className="text-xs font-black uppercase text-slate-500 flex items-center gap-2">← Dashboard</button>
-                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Dettaglio Pagamenti</span>
+                <div className="min-h-screen bg-slate-50 pb-24 animate-fade-in">
+                    <nav className="glass p-4 flex justify-between items-center sticky top-0 z-50 px-6">
+                        <button onClick={()=>setView('dashboard')} className="p-2 rounded-xl bg-slate-100 text-slate-600 active:scale-90 transition-all">
+                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
+                        </button>
+                        <h2 className="text-xs font-black text-slate-900 uppercase">Storico Pagamenti</h2>
+                        <div className="w-9 h-9"></div>
                     </nav>
-                    <main className="p-4 space-y-4 max-w-2xl mx-auto">
-                        <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-2">Cronologia Prestazioni</h2>
-                        {userData.records.map((r, i) => (
-                            <div key={i} className="bg-white rounded-[1.5rem] border border-slate-200 shadow-sm overflow-hidden">
-                                <div className="p-4 bg-slate-50/50 border-b border-slate-100">
-                                    <h3 className="font-black text-slate-900 text-sm uppercase leading-tight">{r.localita}</h3>
-                                    {r.nota && (
-                                        <div className="mt-2 p-3 bg-emerald-50 rounded-xl border border-emerald-100/50">
-                                            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-tighter">Note (Colonna E)</p>
-                                            <p className="text-xs font-bold text-slate-600 leading-tight italic mt-0.5">{r.nota}</p>
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="p-4 grid grid-cols-3 gap-2">
+                    <div className="p-4 space-y-4 max-w-2xl mx-auto">
+                        <input type="text" placeholder="Filtra..." className="w-full p-4 bg-white rounded-2xl border border-slate-200 shadow-sm outline-none" value={filterSearch} onChange={e => setFilterSearch(e.target.value)} />
+                        {userData.records.filter(r => r.localita.toLowerCase().includes(filterSearch.toLowerCase())).map((r, i) => (
+                            <div key={i} className={`bg-white rounded-3xl p-5 border border-slate-200 card-shadow ${r.saldato ? 'opacity-60' : ''}`}>
+                                <div className="flex justify-between items-start mb-3">
                                     <div>
-                                        <span className="text-[8px] font-black text-slate-400 uppercase block">Lordo</span>
-                                        <p className="text-xs font-bold text-slate-600">{formatEuro(r.prezzo)}</p>
-                                    </div>
-                                    <div className="border-x border-slate-100 px-2">
-                                        <span className="text-[8px] font-black text-amber-500 uppercase block">Acconto</span>
-                                        <p className="text-xs font-bold text-amber-600">-{formatEuro(r.acconto)}</p>
+                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{r.data}</span>
+                                        <h3 className="font-black text-slate-900 uppercase text-sm">{r.localita}</h3>
                                     </div>
                                     <div className="text-right">
-                                        <span className="text-[8px] font-black text-slate-400 uppercase block">Saldo</span>
-                                        <p className={`text-xs font-black ${r.netto < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{formatEuro(r.netto)}</p>
+                                        <p className={`text-sm font-black ${r.saldato ? 'text-emerald-500' : 'text-slate-900'}`}>{r.saldato ? 'PAGATO' : formatEuro(r.netto)}</p>
                                     </div>
+                                </div>
+                                <div className="flex gap-3 text-[10px] font-bold text-slate-500 border-t pt-3 border-slate-50">
+                                    <span>Lordo: {formatEuro(r.prezzo)}</span>
+                                    <span className="text-amber-600">Acconto: {formatEuro(r.acconto)}</span>
                                 </div>
                             </div>
                         ))}
-                    </main>
+                    </div>
                 </div>
             );
 
             return (
-                <div className="min-h-screen bg-slate-50 pb-12 animate-fade-in">
-                    <nav className="bg-white border-b p-5 flex justify-between items-center sticky top-0 z-50">
-                        <span className="font-black text-slate-900 uppercase tracking-tight">Artist Hub</span>
-                        <button onClick={()=>setIsLoggedIn(false)} className="text-slate-400 text-xs font-bold uppercase tracking-widest">Esci</button>
+                <div className="min-h-screen bg-slate-50 pb-24 animate-fade-in">
+                    <nav className="glass px-6 py-4 flex justify-between items-center sticky top-0 z-50">
+                        <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xs">A</div>
+                            <span className="font-black text-slate-900 uppercase text-xs">Artist Hub</span>
+                        </div>
+                        <button onClick={()=>setIsLoggedIn(false)} className="text-slate-400 hover:text-red-500 transition-colors">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7" /></svg>
+                        </button>
                     </nav>
-                    <main className="p-4 max-w-2xl mx-auto space-y-6">
+
+                    <main className="p-5 max-w-2xl mx-auto space-y-6">
                         <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
-                            <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/20 rounded-full blur-[60px] -mr-24 -mt-24"></div>
-                            <h2 className="text-3xl font-black uppercase tracking-tight leading-none break-words relative z-10">{userData.nome}</h2>
-                            <p className="text-slate-400 font-bold text-[10px] mt-2 uppercase tracking-widest relative z-10">{userData.email}</p>
-                            <button onClick={()=>setView('details')} className="w-full mt-6 bg-emerald-500 py-4 rounded-2xl text-slate-900 font-black text-[10px] uppercase tracking-widest shadow-lg active:scale-95 transition-all">Analisi Dettagliata →</button>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-4">
-                            <div className={`p-6 rounded-[2rem] shadow-xl relative overflow-hidden ${userData.netto < 0 ? 'bg-red-500 text-white' : 'bg-emerald-500 text-slate-900'}`}>
-                                <span className="text-[9px] font-black uppercase opacity-60 block mb-1">Saldo Finale Netto</span>
-                                <p className="text-4xl font-black tracking-tighter">{formatEuro(userData.netto)}</p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-                                    <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Lordo Totale</span>
-                                    <p className="text-lg font-black text-slate-900">{formatEuro(userData.lordo)}</p>
-                                </div>
-                                <div className="bg-white p-6 rounded-[2rem] border border-slate-200 border-l-4 border-l-amber-400 shadow-sm">
-                                    <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Acconti</span>
-                                    <p className="text-lg font-black text-amber-600">-{formatEuro(userData.acconti)}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-[2rem] p-6 border border-slate-200 shadow-sm">
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Note Recenti</h3>
-                            <div className="space-y-3">
-                                {userData.noteGlobali.length > 0 ? userData.noteGlobali.slice(0, 3).map((n, i) => (
-                                    <div key={i} className="p-3 bg-slate-50 rounded-xl border border-slate-100 border-l-4 border-l-emerald-500/30">
-                                        <p className="text-xs font-medium text-slate-600 italic">"{n}"</p>
+                            <div className="relative z-10">
+                                <h2 className="text-3xl font-black uppercase tracking-tighter mb-1">{userData.nome}</h2>
+                                <p className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mb-8">{userData.email}</p>
+                                <div className="flex gap-4">
+                                    <button onClick={()=>setView('details')} className="flex-1 bg-white text-slate-900 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">Vedi Storico</button>
+                                    <div className="bg-white/5 px-6 rounded-2xl flex flex-col justify-center border border-white/5">
+                                        <span className="text-[7px] font-black text-slate-500 uppercase">Totale Gig</span>
+                                        <span className="text-xl font-black text-emerald-400">{userData.prestazioni}</span>
                                     </div>
-                                )) : <p className="text-center py-4 text-slate-300 text-[10px] font-black uppercase tracking-widest">Nessuna nota</p>}
+                                </div>
                             </div>
                         </div>
 
-                        <div className="text-center p-8 opacity-20">
-                            <p className="text-[8px] font-black uppercase tracking-[0.5em]">Artist Hub Cloud System v2.7</p>
+                        <div className="p-8 rounded-[2.5rem] shadow-xl card-shadow bg-emerald-400 text-slate-900">
+                            <span className="text-[10px] font-black uppercase opacity-60 tracking-widest">Netto da Percepire</span>
+                            <p className="text-5xl font-black tracking-tighter my-2">{formatEuro(userData.netto)}</p>
+                            <span className="text-[8px] font-bold uppercase opacity-50 block mt-4">Somma delle prestazioni non saldate (Col. H)</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 card-shadow text-center">
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Lordo Totale</span>
+                                <p className="text-lg font-black text-slate-900">{formatEuro(userData.lordo)}</p>
+                            </div>
+                            <div className="bg-white p-6 rounded-[2rem] border border-slate-200 card-shadow text-center">
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tot. Acconti</span>
+                                <p className="text-lg font-black text-amber-600">-{formatEuro(userData.acconti)}</p>
+                            </div>
                         </div>
                     </main>
+
+                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+                        <div className="glass px-8 py-4 rounded-full flex items-center gap-10 card-shadow">
+                            <button onClick={()=>setView('dashboard')} className={`p-1 transition-all ${view === 'dashboard' ? 'text-emerald-600 scale-125' : 'text-slate-400'}`}>
+                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" /></svg>
+                            </button>
+                            <button onClick={()=>setView('details')} className={`p-1 transition-all ${view === 'details' ? 'text-emerald-600 scale-125' : 'text-slate-400'}`}>
+                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" /></svg>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             );
         }
