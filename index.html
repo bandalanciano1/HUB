@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artist Hub - Portale Musicisti</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style> 
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- CONFIGURAZIONE ---
+        const SPREADSHEET_ID = '1fSkpwqDJdoc_7IY1pkTtlhsbUIt-OdiY7Wrh0B0VXSE';
+        const CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=0`;
+
+        // Indici Colonne CSV (Base 0)
+        const COL_NOMINATIVO = 1; // B
+        const COL_PASSWORD = 2;   // C
+        const COL_EMAIL = 3;      // D
+        const COL_NOTE = 4;       // E
+        const COL_PREZZO = 5;     // F
+        const COL_LUOGO = 6;      // G
+        const COL_ACCONTO = 8;    // I
+
+        function App() {
+            const [loading, setLoading] = useState(true);
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [loginInput, setLoginInput] = useState('');
+            const [passwordInput, setPasswordInput] = useState('');
+            const [rememberMe, setRememberMe] = useState(false);
+            const [error, setError] = useState(null);
+            const [allData, setAllData] = useState([]);
+            const [userData, setUserData] = useState(null);
+            const [view, setView] = useState('dashboard');
+
+            useEffect(() => {
+                const savedEmail = localStorage.getItem('artist_hub_email');
+                const savedPass = localStorage.getItem('artist_hub_pass');
+                if (savedEmail && savedPass) {
+                    setLoginInput(savedEmail);
+                    setPasswordInput(savedPass);
+                    setRememberMe(true);
+                }
+                fetchCSV();
+            }, []);
+
+            const fetchCSV = async () => {
+                try {
+                    const response = await fetch(`${CSV_URL}&t=${Date.now()}`);
+                    const text = await response.text();
+                    const parsed = parseCSV(text);
+                    setAllData(parsed);
+                    setLoading(false);
+                } catch (e) {
+                    setError("Errore nel caricamento dei dati.");
+                    setLoading(false);
+                }
+            };
+
+            const parseCSV = (text) => {
+                const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+                return lines.slice(1).map((line, index) => {
+                    const values = [];
+                    let current = '', inQuotes = false;
+                    for (let i = 0; i < line.length; i++) {
+                        const char = line[i];
+                        if (char === '"') inQuotes = !inQuotes;
+                        else if (char === ',' && !inQuotes) { values.push(current.trim()); current = ''; }
+                        else current += char;
+                    }
+                    values.push(current.trim());
+                    return {
+                        _rowIndex: index,
+                        _rawValues: values.map(v => v.replace(/^"|"$/g, '').trim())
+                    };
+                });
+            };
+
+            const cleanNumber = (valStr) => {
+                if (!valStr) return 0;
+                let cleanVal = valStr.toString().replace(/[^\d,.-]/g, '').replace(',', '.');
+                return parseFloat(cleanVal) || 0;
+            };
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                const email = loginInput.trim().toLowerCase();
+                const pass = passwordInput.trim();
+
+                const userRows = allData.filter(row => 
+                    row._rawValues[COL_EMAIL]?.toLowerCase() === email && 
+                    row._rawValues[COL_PASSWORD] === pass
+                );
+
+                if (userRows.length > 0) {
+                    if (rememberMe) {
+                        localStorage.setItem('artist_hub_email', email);
+                        localStorage.setItem('artist_hub_pass', pass);
+                    } else {
+                        localStorage.removeItem('artist_hub_email');
+                        localStorage.removeItem('artist_hub_pass');
+                    }
+                    processUserData(userRows);
+                    setIsLoggedIn(true);
+                } else {
+                    setError("Credenziali non corrette.");
+                }
+            };
+
+            const processUserData = (rows) => {
+                let totalLordo = 0;
+                let totalAcconti = 0;
+
+                const records = rows.map(row => {
+                    const prezzo = cleanNumber(row._rawValues[COL_PREZZO]);
+                    const acconto = cleanNumber(row._rawValues[COL_ACCONTO]);
+                    totalLordo += prezzo;
+                    totalAcconti += acconto;
+
+                    return {
+                        localita: row._rawValues[COL_LUOGO] || 'N/D',
+                        nota: row._rawValues[COL_NOTE] || '',
+                        prezzo,
+                        acconto,
+                        netto: prezzo - acconto
+                    };
+                });
+
+                setUserData({
+                    nome: rows[0]._rawValues[COL_NOMINATIVO],
+                    email: rows[0]._rawValues[COL_EMAIL],
+                    lordo: totalLordo,
+                    acconti: totalAcconti,
+                    netto: totalLordo - totalAcconti,
+                    records,
+                    prestazioni: rows.length,
+                    noteGlobali: [...new Set(records.map(r => r.nota).filter(n => n && n !== '-' && n !== ''))]
+                });
+            };
+
+            const formatEuro = (num) => num.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
+
+            if (loading) return (
+                <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
+                    <p className="mt-4 text-emerald-500 font-bold text-[10px] tracking-widest uppercase">Sincronizzazione...</p>
+                </div>
+            );
+
+            if (!isLoggedIn) return (
+                <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-[100px] -mr-48 -mt-48"></div>
+                    <div className="max-w-md w-full bg-slate-900/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/5 shadow-2xl relative z-10 animate-fade-in">
+                        <div className="text-center mb-8">
+                            <h1 className="text-2xl font-black text-white uppercase tracking-tight">Artist Hub</h1>
+                            <p className="text-slate-400 text-xs mt-2">Area Riservata Musicisti</p>
+                        </div>
+                        <form onSubmit={handleLogin} className="space-y-5">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-2">Email</label>
+                                <input type="email" className="w-full mt-1 p-4 bg-slate-800/50 border border-white/5 rounded-2xl text-white font-bold outline-none focus:border-emerald-500/50 transition-all" value={loginInput} onChange={e=>setLoginInput(e.target.value)} required />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-2">Password</label>
+                                <input type="password" className="w-full mt-1 p-4 bg-slate-800/50 border border-white/5 rounded-2xl text-white font-bold outline-none focus:border-emerald-500/50 transition-all" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} required />
+                            </div>
+                            <div className="flex items-center gap-3 px-2">
+                                <div onClick={()=>setRememberMe(!rememberMe)} className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center cursor-pointer transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
+                                    {rememberMe && <div className="w-2 h-2 bg-slate-900 rounded-full"></div>}
+                                </div>
+                                <span className="text-xs text-slate-400 font-bold uppercase tracking-tighter cursor-pointer" onClick={()=>setRememberMe(!rememberMe)}>Ricordami</span>
+                            </div>
+                            {error && <p className="text-red-400 text-[10px] font-bold text-center uppercase">{error}</p>}
+                            <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-widest text-slate-900 shadow-lg shadow-emerald-500/20 active:scale-95 transition-transform">Entra</button>
+                        </form>
+                    </div>
+                </div>
+            );
+
+            if (view === 'details') return (
+                <div className="min-h-screen bg-slate-50 pb-12 animate-fade-in">
+                    <nav className="bg-white border-b p-4 flex justify-between items-center sticky top-0 z-50">
+                        <button onClick={()=>setView('dashboard')} className="text-xs font-black uppercase text-slate-500 flex items-center gap-2">← Dashboard</button>
+                        <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Dettaglio Pagamenti</span>
+                    </nav>
+                    <main className="p-4 space-y-4 max-w-2xl mx-auto">
+                        <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-2">Cronologia Prestazioni</h2>
+                        {userData.records.map((r, i) => (
+                            <div key={i} className="bg-white rounded-[1.5rem] border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-4 bg-slate-50/50 border-b border-slate-100">
+                                    <h3 className="font-black text-slate-900 text-sm uppercase leading-tight">{r.localita}</h3>
+                                    {/* VISUALIZZAZIONE NOTE SINGOLO EVENTO */}
+                                    {r.nota && r.nota !== '-' && (
+                                        <div className="mt-2 p-3 bg-emerald-50 rounded-xl border border-emerald-100/50">
+                                            <p className="text-[9px] font-black text-emerald-600 uppercase tracking-tighter">Nota Evento</p>
+                                            <p className="text-xs font-bold text-slate-600 leading-tight italic mt-0.5">{r.nota}</p>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="p-4 grid grid-cols-3 gap-2">
+                                    <div>
+                                        <span className="text-[8px] font-black text-slate-400 uppercase block">Lordo</span>
+                                        <p className="text-xs font-bold text-slate-600">{formatEuro(r.prezzo)}</p>
+                                    </div>
+                                    <div className="border-x border-slate-100 px-2">
+                                        <span className="text-[8px] font-black text-amber-500 uppercase block">Acconto</span>
+                                        <p className="text-xs font-bold text-amber-600">-{formatEuro(r.acconto)}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="text-[8px] font-black text-slate-400 uppercase block">Saldo</span>
+                                        <p className={`text-xs font-black ${r.netto < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{formatEuro(r.netto)}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </main>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen bg-slate-50 pb-12 animate-fade-in">
+                    <nav className="bg-white border-b p-5 flex justify-between items-center sticky top-0 z-50">
+                        <span className="font-black text-slate-900 uppercase tracking-tight">Artist Hub</span>
+                        <button onClick={()=>setIsLoggedIn(false)} className="text-slate-400 text-xs font-bold uppercase tracking-widest">Esci</button>
+                    </nav>
+                    <main className="p-4 max-w-2xl mx-auto space-y-6">
+                        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/20 rounded-full blur-[60px] -mr-24 -mt-24"></div>
+                            <h2 className="text-3xl font-black uppercase tracking-tight leading-none break-words relative z-10">{userData.nome}</h2>
+                            <p className="text-slate-400 font-bold text-[10px] mt-2 uppercase tracking-widest relative z-10">{userData.email}</p>
+                            
+                            <div className="mt-6 flex items-center gap-3 relative z-10">
+                                <div className="bg-white/10 px-4 py-2 rounded-xl border border-white/10">
+                                    <span className="text-[8px] font-black text-emerald-400 uppercase block tracking-[0.2em]">Presenze</span>
+                                    <span className="text-xl font-black text-white">{userData.prestazioni}</span>
+                                </div>
+                                <button onClick={()=>setView('details')} className="flex-1 bg-emerald-500 py-4 rounded-2xl text-slate-900 font-black text-[10px] uppercase tracking-widest shadow-lg active:scale-95 transition-all">Resoconto Dettagliato →</button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4">
+                            <div className={`p-6 rounded-[2rem] shadow-xl relative overflow-hidden ${userData.netto < 0 ? 'bg-red-500 text-white' : 'bg-emerald-500 text-slate-900'}`}>
+                                <span className="text-[9px] font-black uppercase opacity-60 block mb-1 tracking-widest">Saldo Finale Netto</span>
+                                <p className="text-4xl font-black tracking-tighter">{formatEuro(userData.netto)}</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                                    <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Lordo Totale</span>
+                                    <p className="text-lg font-black text-slate-900">{formatEuro(userData.lordo)}</p>
+                                </div>
+                                <div className="bg-white p-6 rounded-[2rem] border border-slate-200 border-l-4 border-l-amber-400 shadow-sm">
+                                    <span className="text-[8px] font-black text-slate-400 uppercase block mb-1 text-amber-600">Tot. Acconti</span>
+                                    <p className="text-lg font-black text-amber-600">-{formatEuro(userData.acconti)}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-[2rem] p-6 border border-slate-200 shadow-sm">
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Note Recenti</h3>
+                            <div className="space-y-3">
+                                {userData.noteGlobali.length > 0 ? userData.noteGlobali.slice(0, 3).map((n, i) => (
+                                    <div key={i} className="p-3 bg-slate-50 rounded-xl border border-slate-100 border-l-4 border-l-emerald-500/30">
+                                        <p className="text-xs font-medium text-slate-600 italic">"{n}"</p>
+                                    </div>
+                                )) : <p className="text-center py-4 text-slate-300 text-[10px] font-black uppercase tracking-widest">Nessuna nota</p>}
+                            </div>
+                        </div>
+
+                        <div className="text-center p-8 opacity-20">
+                            <p className="text-[8px] font-black uppercase tracking-[0.5em]">Artist Hub Cloud System v2.8</p>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
