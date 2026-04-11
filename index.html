@@ -31,12 +31,12 @@
         // Mappatura Colonne (Base 0)
         const COL_DATA = 0;       // A
         const COL_NOMINATIVO = 1; // B
-        const COL_PASSWORD = 2;   // C <--- PASSWORD
-        const COL_EMAIL = 3;      // D <--- EMAIL
+        const COL_PASSWORD = 2;   // C
+        const COL_EMAIL = 3;      // D
         const COL_NOTE = 4;       // E
         const COL_PREZZO = 5;     // F
         const COL_LUOGO = 6;      // G
-        const COL_SALDATO = 7;    // H (TRUE/FALSE o VERO/FALSO)
+        const COL_SALDATO = 7;    // H
         const COL_ACCONTO = 8;    // I
 
         function App() {
@@ -50,37 +50,8 @@
             const [userData, setUserData] = useState(null);
             const [view, setView] = useState('dashboard');
             const [filterSearch, setFilterSearch] = useState('');
-            const [lastSync, setLastSync] = useState(null);
 
-            useEffect(() => {
-                const savedEmail = localStorage.getItem('artist_hub_email');
-                const savedPass = localStorage.getItem('artist_hub_pass');
-                if (savedEmail && savedPass) {
-                    setLoginInput(savedEmail);
-                    setPasswordInput(savedPass);
-                    setRememberMe(true);
-                }
-                
-                fetchCSV();
-                const interval = setInterval(fetchCSV, AUTO_REFRESH_TIME);
-                return () => clearInterval(interval);
-            }, []);
-
-            const fetchCSV = async () => {
-                try {
-                    const response = await fetch(`${CSV_URL}&t=${Date.now()}`);
-                    const text = await response.text();
-                    const parsed = parseCSV(text);
-                    setAllData(parsed);
-                    setLastSync(new Date().toLocaleTimeString());
-                    setLoading(false);
-                } catch (e) {
-                    console.error("Errore sincronizzazione:", e);
-                    setError("Errore di connessione al database.");
-                    setLoading(false);
-                }
-            };
-
+            // Funzione di Parsing CSV robusta
             const parseCSV = (text) => {
                 const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
                 return lines.slice(1).map((line, index) => {
@@ -93,7 +64,6 @@
                         else current += char;
                     }
                     values.push(current.trim());
-                    // Pulizia profonda di ogni valore da apici e spazi bianchi
                     return {
                         _rowIndex: index,
                         _rawValues: values.map(v => v.replace(/^["']|["']$/g, '').trim())
@@ -108,7 +78,7 @@
             };
 
             const processUserData = useCallback((rows) => {
-                if (!rows || rows.length === 0) return;
+                if (!rows || rows.length === 0) return null;
                 
                 let totalLordo = 0;
                 let totalAcconti = 0;
@@ -139,26 +109,70 @@
 
                 records.sort((a, b) => b.data.localeCompare(a.data));
 
-                setUserData({
+                return {
                     nome: rows[0]._rawValues[COL_NOMINATIVO],
                     email: rows[0]._rawValues[COL_EMAIL],
                     lordo: totalLordo,
                     acconti: totalAcconti,
                     netto: daPercepire,
                     records,
-                    prestazioni: rows.length,
-                    noteGlobali: [...new Set(records.map(r => r.nota).filter(n => n && n !== '-' && n !== ''))]
-                });
+                    prestazioni: rows.length
+                };
             }, []);
+
+            const fetchCSV = async (silent = false) => {
+                if (!silent) setLoading(true);
+                try {
+                    const response = await fetch(`${CSV_URL}&t=${Date.now()}`);
+                    const text = await response.text();
+                    const parsed = parseCSV(text);
+                    setAllData(parsed);
+                    
+                    // Se l'utente è loggato, aggiorna i suoi dati in tempo reale dal nuovo allData
+                    if (isLoggedIn && userData) {
+                        const updatedRows = parsed.filter(row => 
+                            (row._rawValues[COL_EMAIL] || "").toLowerCase() === userData.email.toLowerCase()
+                        );
+                        if (updatedRows.length > 0) {
+                            setUserData(processUserData(updatedRows));
+                        }
+                    }
+                } catch (e) {
+                    console.error("Errore sync:", e);
+                    setError("Errore di connessione al database.");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // Inizializzazione e Auto-refresh
+            useEffect(() => {
+                const savedEmail = localStorage.getItem('artist_hub_email');
+                const savedPass = localStorage.getItem('artist_hub_pass');
+                
+                if (savedEmail && savedPass) {
+                    setLoginInput(savedEmail);
+                    setPasswordInput(savedPass);
+                    setRememberMe(true);
+                }
+
+                fetchCSV();
+                const interval = setInterval(() => fetchCSV(true), AUTO_REFRESH_TIME);
+                return () => clearInterval(interval);
+            }, [isLoggedIn]); // Riesegue logica se cambia stato login
 
             const handleLogin = (e) => {
                 e.preventDefault();
                 setError(null);
                 
+                if (allData.length === 0) {
+                    setError("Dati in caricamento, riprova tra un istante...");
+                    return;
+                }
+
                 const emailInput = loginInput.trim().toLowerCase();
                 const passInput = passwordInput.trim();
 
-                // Cerchiamo l'utente verificando Email (Col D) e Password (Col C)
                 const userRows = allData.filter(row => {
                     const dbEmail = (row._rawValues[COL_EMAIL] || "").toLowerCase();
                     const dbPass = row._rawValues[COL_PASSWORD] || "";
@@ -173,59 +187,73 @@
                         localStorage.removeItem('artist_hub_email');
                         localStorage.removeItem('artist_hub_pass');
                     }
-                    processUserData(userRows);
+                    const processed = processUserData(userRows);
+                    setUserData(processed);
                     setIsLoggedIn(true);
                 } else {
-                    setError("Email o Password errati. Verifica i dati nel foglio.");
+                    setError("Credenziali non valide.");
+                }
+            };
+
+            const handleLogout = () => {
+                setIsLoggedIn(false);
+                setUserData(null);
+                setView('dashboard');
+                if (!rememberMe) {
+                    setLoginInput('');
+                    setPasswordInput('');
                 }
             };
 
             const formatEuro = (num) => num.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
 
+            // Render caricamento iniziale
             if (loading && allData.length === 0) return (
                 <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
                     <div className="w-12 h-12 border-4 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin"></div>
-                    <p className="mt-4 text-emerald-500 font-bold text-[10px] tracking-widest uppercase">Connessione al Database...</p>
+                    <p className="mt-4 text-emerald-500 font-bold text-[10px] tracking-widest uppercase">Caricamento Artist Hub...</p>
                 </div>
             );
 
+            // Render Login
             if (!isLoggedIn) return (
                 <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
                     <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px]"></div>
                     <div className="max-w-md w-full bg-slate-900/40 backdrop-blur-2xl p-10 rounded-[2.5rem] border border-white/5 shadow-2xl relative z-10 animate-fade-in">
                         <div className="text-center mb-10">
                             <div className="inline-flex p-3 bg-emerald-500/10 rounded-2xl mb-4 border border-emerald-500/20">
-                                <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-10.726A10.023 10.023 0 002 10.75c0 1.258.232 2.463.654 3.576" /></svg>
+                                <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" /></svg>
                             </div>
                             <h1 className="text-3xl font-black text-white uppercase tracking-tighter">Artist Hub</h1>
-                            <p className="text-slate-500 text-[10px] font-bold mt-2 uppercase tracking-[0.2em]">Accedi con Email (D) e Pass (C)</p>
+                            <p className="text-slate-500 text-[10px] font-bold mt-2 uppercase tracking-[0.2em]">Gestione Prestazioni Professionali</p>
                         </div>
                         
                         <form onSubmit={handleLogin} className="space-y-6">
                             <div className="space-y-1.5">
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email</label>
-                                <input type="email" placeholder="esempio@email.it" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={loginInput} onChange={e=>setLoginInput(e.target.value)} required />
+                                <input type="email" placeholder="latua@email.it" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={loginInput} onChange={e=>setLoginInput(e.target.value)} required />
                             </div>
                             <div className="space-y-1.5">
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Password</label>
                                 <input type="password" placeholder="••••••••" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} required />
                             </div>
                             
-                            <div className="flex items-center gap-3 px-1">
-                                <div onClick={()=>setRememberMe(!rememberMe)} className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center cursor-pointer transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
+                            <div className="flex items-center gap-3 px-1" onClick={()=>setRememberMe(!rememberMe)}>
+                                <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center cursor-pointer transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
                                     {rememberMe && <svg className="w-4 h-4 text-slate-900" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight cursor-pointer" onClick={()=>setRememberMe(!rememberMe)}>Resta collegato</span>
+                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight cursor-pointer">Ricordami</span>
                             </div>
 
                             {error && <div className="bg-red-500/10 border border-red-500/20 py-3 rounded-xl"><p className="text-red-400 text-[10px] font-black text-center uppercase tracking-wider">{error}</p></div>}
                             
-                            <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] text-slate-950 hover:bg-emerald-400 transition-all">Entra</button>
+                            <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] text-slate-950 hover:bg-emerald-400 transition-all">Accedi</button>
                         </form>
                     </div>
                 </div>
             );
 
+            // Render Dettagli Storico
             if (view === 'details') return (
                 <div className="min-h-screen bg-slate-50 pb-24 animate-fade-in">
                     <nav className="glass p-4 flex justify-between items-center sticky top-0 z-50 px-6">
@@ -236,16 +264,19 @@
                         <div className="w-9 h-9"></div>
                     </nav>
                     <div className="p-4 space-y-4 max-w-2xl mx-auto">
-                        <input type="text" placeholder="Filtra..." className="w-full p-4 bg-white rounded-2xl border border-slate-200 shadow-sm outline-none" value={filterSearch} onChange={e => setFilterSearch(e.target.value)} />
+                        <div className="relative">
+                            <input type="text" placeholder="Cerca luogo..." className="w-full p-4 pl-12 bg-white rounded-2xl border border-slate-200 shadow-sm outline-none focus:ring-2 ring-emerald-500/20" value={filterSearch} onChange={e => setFilterSearch(e.target.value)} />
+                            <svg className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                        </div>
                         {userData.records.filter(r => r.localita.toLowerCase().includes(filterSearch.toLowerCase())).map((r, i) => (
-                            <div key={i} className={`bg-white rounded-3xl p-5 border border-slate-200 card-shadow ${r.saldato ? 'opacity-60' : ''}`}>
+                            <div key={i} className={`bg-white rounded-3xl p-5 border border-slate-200 card-shadow transition-opacity ${r.saldato ? 'opacity-50' : ''}`}>
                                 <div className="flex justify-between items-start mb-3">
                                     <div>
                                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{r.data}</span>
                                         <h3 className="font-black text-slate-900 uppercase text-sm">{r.localita}</h3>
                                     </div>
                                     <div className="text-right">
-                                        <p className={`text-sm font-black ${r.saldato ? 'text-emerald-500' : 'text-slate-900'}`}>{r.saldato ? 'PAGATO' : formatEuro(r.netto)}</p>
+                                        <p className={`text-sm font-black ${r.saldato ? 'text-emerald-500' : 'text-slate-900'}`}>{r.saldato ? 'SALDATO' : formatEuro(r.netto)}</p>
                                     </div>
                                 </div>
                                 <div className="flex gap-3 text-[10px] font-bold text-slate-500 border-t pt-3 border-slate-50">
@@ -258,6 +289,7 @@
                 </div>
             );
 
+            // Render Dashboard Principale
             return (
                 <div className="min-h-screen bg-slate-50 pb-24 animate-fade-in">
                     <nav className="glass px-6 py-4 flex justify-between items-center sticky top-0 z-50">
@@ -265,7 +297,7 @@
                             <div className="w-8 h-8 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xs">A</div>
                             <span className="font-black text-slate-900 uppercase text-xs">Artist Hub</span>
                         </div>
-                        <button onClick={()=>setIsLoggedIn(false)} className="text-slate-400 hover:text-red-500 transition-colors">
+                        <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7" /></svg>
                         </button>
                     </nav>
@@ -278,17 +310,18 @@
                                 <div className="flex gap-4">
                                     <button onClick={()=>setView('details')} className="flex-1 bg-white text-slate-900 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">Vedi Storico</button>
                                     <div className="bg-white/5 px-6 rounded-2xl flex flex-col justify-center border border-white/5">
-                                        <span className="text-[7px] font-black text-slate-500 uppercase">Totale Gig</span>
+                                        <span className="text-[7px] font-black text-slate-500 uppercase">Gigs</span>
                                         <span className="text-xl font-black text-emerald-400">{userData.prestazioni}</span>
                                     </div>
                                 </div>
                             </div>
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl"></div>
                         </div>
 
                         <div className="p-8 rounded-[2.5rem] shadow-xl card-shadow bg-emerald-400 text-slate-900">
-                            <span className="text-[10px] font-black uppercase opacity-60 tracking-widest">Netto da Percepire</span>
+                            <span className="text-[10px] font-black uppercase opacity-60 tracking-widest">Netto da Riscuotere</span>
                             <p className="text-5xl font-black tracking-tighter my-2">{formatEuro(userData.netto)}</p>
-                            <span className="text-[8px] font-bold uppercase opacity-50 block mt-4">Somma delle prestazioni non saldate (Col. H)</span>
+                            <span className="text-[8px] font-bold uppercase opacity-50 block mt-4">Calcolato su prestazioni non saldate</span>
                         </div>
                         
                         <div className="grid grid-cols-2 gap-4">
@@ -304,7 +337,7 @@
                     </main>
 
                     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
-                        <div className="glass px-8 py-4 rounded-full flex items-center gap-10 card-shadow">
+                        <div className="glass px-8 py-4 rounded-full flex items-center gap-10 card-shadow border border-white/50">
                             <button onClick={()=>setView('dashboard')} className={`p-1 transition-all ${view === 'dashboard' ? 'text-emerald-600 scale-125' : 'text-slate-400'}`}>
                                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" /></svg>
                             </button>
