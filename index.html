@@ -4,10 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Artist Hub - Portale Musicisti</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- React & ReactDOM CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel Standalone (pinned to a stable version to prevent ESM loader errors) -->
+    <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js" crossorigin></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
@@ -21,7 +25,8 @@
 <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
-    <script type="text/babel">
+    <!-- Adding data-presets="react" explicitly prevents Babel from treating the script as an ES Module -->
+    <script type="text/babel" data-presets="react">
         const { useState, useEffect, useMemo, useCallback } = React;
 
         const SPREADSHEET_ID = '1fSkpwqDJdoc_7IY1pkTtlhsbUIt-OdiY7Wrh0B0VXSE';
@@ -37,6 +42,16 @@
         const COL_LUOGO = 6;
         const COL_SALDATO = 7;
         const COL_ACCONTO = 8;
+
+        const formatEuro = (num) => num.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
+
+        // Utility component placed outside App to prevent useless re-renders
+        function DisplayAmount({ value, isBlurrable = false, isSaldato = false, showAmounts = true }) {
+            if (isSaldato) return <span>SALDATO</span>;
+            const formatted = formatEuro(value);
+            const shouldBlur = isBlurrable && !showAmounts;
+            return <span className={shouldBlur ? 'amount-blur' : ''}>{formatted}</span>;
+        }
 
         function App() {
             const [loading, setLoading] = useState(true);
@@ -58,9 +73,14 @@
                     let current = '', inQuotes = false;
                     for (let i = 0; i < line.length; i++) {
                         const char = line[i];
-                        if (char === '"') inQuotes = !inQuotes;
-                        else if (char === ',' && !inQuotes) { values.push(current.trim()); current = ''; }
-                        else current += char;
+                        if (char === '"') {
+                            inQuotes = !inQuotes;
+                        } else if (char === ',' && !inQuotes) {
+                            values.push(current.trim());
+                            current = '';
+                        } else {
+                            current += char;
+                        }
                     }
                     values.push(current.trim());
                     return {
@@ -123,6 +143,7 @@
                 if (!silent) setLoading(true);
                 try {
                     const response = await fetch(`${CSV_URL}&t=${Date.now()}`);
+                    if (!response.ok) throw new Error("Errore nel caricamento del file");
                     const text = await response.text();
                     const parsed = parseCSV(text);
                     setAllData(parsed);
@@ -179,6 +200,9 @@
                     if (rememberMe) {
                         localStorage.setItem('artist_hub_email', emailInput);
                         localStorage.setItem('artist_hub_pass', passInput);
+                    } else {
+                        localStorage.removeItem('artist_hub_email');
+                        localStorage.removeItem('artist_hub_pass');
                     }
                     setUserData(processUserData(userRows));
                     setIsLoggedIn(true);
@@ -196,16 +220,6 @@
                     setLoginInput('');
                     setPasswordInput('');
                 }
-            };
-
-            const formatEuro = (num) => num.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
-
-            // Helper per visualizzare gli importi
-            const DisplayAmount = ({ value, isBlurrable = false, isSaldato = false }) => {
-                if (isSaldato) return <span>SALDATO</span>;
-                const formatted = formatEuro(value);
-                const shouldBlur = isBlurrable && !showDashboardAmounts;
-                return <span className={shouldBlur ? 'amount-blur' : ''}>{formatted}</span>;
             };
 
             if (loading && allData.length === 0) return (
@@ -235,11 +249,11 @@
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Password</label>
                                 <input type="password" placeholder="••••••••" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} required />
                             </div>
-                            <div className="flex items-center gap-3 px-1" onClick={()=>setRememberMe(!rememberMe)}>
-                                <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center cursor-pointer transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
+                            <div className="flex items-center gap-3 px-1 cursor-pointer" onClick={()=>setRememberMe(!rememberMe)}>
+                                <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
                                     {rememberMe && <svg className="w-4 h-4 text-slate-900" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight cursor-pointer">Ricordami</span>
+                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight">Ricordami</span>
                             </div>
                             {error && <div className="bg-red-500/10 border border-red-500/20 py-3 rounded-xl"><p className="text-red-400 text-[10px] font-black text-center uppercase tracking-wider">{error}</p></div>}
                             <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] text-slate-950 hover:bg-emerald-400 transition-all">Accedi</button>
@@ -271,13 +285,13 @@
                                     </div>
                                     <div className="text-right">
                                         <div className={`text-sm font-black ${r.saldato ? 'text-emerald-500' : 'text-slate-900'}`}>
-                                            <DisplayAmount value={r.netto} isSaldato={r.saldato} />
+                                            <DisplayAmount value={r.netto} isSaldato={r.saldato} showAmounts={showDashboardAmounts} />
                                         </div>
                                     </div>
                                 </div>
                                 <div className="flex gap-3 text-[10px] font-bold text-slate-500 border-t pt-3 border-slate-50">
-                                    <span>Lordo: <DisplayAmount value={r.prezzo} /></span>
-                                    <span className="text-amber-600">Acconto: <DisplayAmount value={r.acconto} /></span>
+                                    <span>Lordo: <DisplayAmount value={r.prezzo} showAmounts={showDashboardAmounts} /></span>
+                                    <span className="text-amber-600">Acconto: <DisplayAmount value={r.acconto} showAmounts={showDashboardAmounts} /></span>
                                 </div>
                             </div>
                         ))}
@@ -329,7 +343,7 @@
                             </div>
                             <div className="flex items-center gap-4 my-2">
                                 <p className="text-5xl font-black tracking-tighter">
-                                    <DisplayAmount value={userData.netto} isBlurrable={true} />
+                                    <DisplayAmount value={userData.netto} isBlurrable={true} showAmounts={showDashboardAmounts} />
                                 </p>
                             </div>
                             <span className="text-[8px] font-bold uppercase opacity-50 block mt-4">Calcolato su prestazioni non saldate</span>
@@ -339,14 +353,13 @@
                             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 card-shadow text-center">
                                 <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Lordo Totale</span>
                                 <p className="text-lg font-black text-slate-900">
-                                    <DisplayAmount value={userData.lordo} isBlurrable={true} />
+                                    <DisplayAmount value={userData.lordo} isBlurrable={true} showAmounts={showDashboardAmounts} />
                                 </p>
                             </div>
                             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 card-shadow text-center">
                                 <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tot. Acconti</span>
                                 <p className="text-lg font-black text-amber-600">
-                                    <span className={!showDashboardAmounts ? 'amount-blur' : ''}>-</span>
-                                    <DisplayAmount value={userData.acconti} isBlurrable={true} />
+                                    <DisplayAmount value={userData.acconti} isBlurrable={true} showAmounts={showDashboardAmounts} />
                                 </p>
                             </div>
                         </div>
