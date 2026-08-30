@@ -7,32 +7,58 @@
     <!-- React & ReactDOM CDN -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <!-- Babel Standalone (pinned to a stable version to prevent ESM loader errors) -->
+    <!-- Babel Standalone -->
     <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js" crossorigin></script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
-        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.3); }
-        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); }
-        .amount-blur { filter: blur(8px); pointer-events: none; user-select: none; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            -webkit-tap-highlight-color: transparent; 
+        }
+        .animate-fade-in { 
+            animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; 
+        }
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateY(6px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+        .glass { 
+            background: rgba(255, 255, 255, 0.85); 
+            backdrop-filter: blur(16px); 
+            -webkit-backdrop-filter: blur(16px); 
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8); 
+        }
+        .glass-dark {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .card-shadow { 
+            box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.04), 0 4px 6px -2px rgba(0, 0, 0, 0.02); 
+        }
+        .amount-blur { 
+            filter: blur(7px); 
+            pointer-events: none; 
+            user-select: none; 
+            transition: filter 0.2s ease;
+        }
     </style> 
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body class="bg-slate-50 text-slate-900 antialiased selection:bg-emerald-500 selection:text-white">
     <div id="root"></div>
 
-    <!-- Adding data-presets="react" explicitly prevents Babel from treating the script as an ES Module -->
     <script type="text/babel" data-presets="react">
-        const { useState, useEffect, useMemo, useCallback } = React;
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         const SPREADSHEET_ID = '1fSkpwqDJdoc_7IY1pkTtlhsbUIt-OdiY7Wrh0B0VXSE';
         const CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=0`;
         const AUTO_REFRESH_TIME = 60000; 
 
+        // Indici colonne CSV
         const COL_DATA = 0;
         const COL_NOMINATIVO = 1;
         const COL_PASSWORD = 2;
@@ -43,14 +69,51 @@
         const COL_SALDATO = 7;
         const COL_ACCONTO = 8;
 
-        const formatEuro = (num) => num.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
+        // Dati di mock per test / fallback in caso di errore di connessione al foglio
+        const MOCK_DATA = [
+            {
+                _rowIndex: 1,
+                _rawValues: ['15/05/2026', 'Mario Rossi', '1234', 'mario@music.it', 'Festival Jazz Main Stage', '450', 'Milano - Jazz Club', 'FALSO', '100']
+            },
+            {
+                _rowIndex: 2,
+                _rawValues: ['20/05/2026', 'Mario Rossi', '1234', 'mario@music.it', 'Evento Privato Matrimonio', '600', 'Villa Borromeo, Como', 'VERO', '200']
+            },
+            {
+                _rowIndex: 3,
+                _rawValues: ['02/06/2026', 'Mario Rossi', '1234', 'mario@music.it', 'Set Acustico Aperitivo', '300', 'Torino - Lounge Bar', 'FALSO', '50']
+            }
+        ];
 
-        // Utility component placed outside App to prevent useless re-renders
-        function DisplayAmount({ value, isBlurrable = false, isSaldato = false, showAmounts = true }) {
-            if (isSaldato) return <span>SALDATO</span>;
+        const formatEuro = (num) => {
+            const val = Number(num) || 0;
+            return val.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
+        };
+
+        // Utility per la visualizzazione formattata/oscurata degli importi
+        function DisplayAmount({ value, isBlurrable = true, isSaldato = false, showAmounts = true, className = "" }) {
+            if (isSaldato) return <span className="text-emerald-600 font-bold uppercase tracking-wider text-xs bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">Saldato</span>;
             const formatted = formatEuro(value);
             const shouldBlur = isBlurrable && !showAmounts;
-            return <span className={shouldBlur ? 'amount-blur' : ''}>{formatted}</span>;
+            return (
+                <span className={`${shouldBlur ? 'amount-blur' : ''} ${className}`}>
+                    {shouldBlur ? '€ •••,••' : formatted}
+                </span>
+            );
+        }
+
+        // Icona Occhio Aperto / Chiuso
+        function EyeIcon({ show }) {
+            return show ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+            ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                </svg>
+            );
         }
 
         function App() {
@@ -61,20 +124,34 @@
             const [passwordInput, setPasswordInput] = useState('');
             const [rememberMe, setRememberMe] = useState(false);
             const [error, setError] = useState(null);
+            const [usingDemoData, setUsingDemoData] = useState(false);
             const [allData, setAllData] = useState([]);
             const [userData, setUserData] = useState(null);
-            const [view, setView] = useState('dashboard');
+            const [view, setView] = useState('dashboard'); // 'dashboard' | 'details'
             const [filterSearch, setFilterSearch] = useState('');
+            const [filterStatus, setFilterStatus] = useState('all'); // 'all' | 'pending' | 'paid'
 
+            // Parser CSV conforme a RFC 4180 per campi racchiusi tra virgolette e con virgole
             const parseCSV = (text) => {
                 const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+                if (lines.length <= 1) return [];
+
                 return lines.slice(1).map((line, index) => {
                     const values = [];
-                    let current = '', inQuotes = false;
+                    let current = '';
+                    let inQuotes = false;
+                    
                     for (let i = 0; i < line.length; i++) {
                         const char = line[i];
+                        const nextChar = line[i + 1];
+
                         if (char === '"') {
-                            inQuotes = !inQuotes;
+                            if (inQuotes && nextChar === '"') {
+                                current += '"';
+                                i++; // salta virgoletta escapata
+                            } else {
+                                inQuotes = !inQuotes;
+                            }
                         } else if (char === ',' && !inQuotes) {
                             values.push(current.trim());
                             current = '';
@@ -83,6 +160,7 @@
                         }
                     }
                     values.push(current.trim());
+
                     return {
                         _rowIndex: index,
                         _rawValues: values.map(v => v.replace(/^["']|["']$/g, '').trim())
@@ -92,8 +170,28 @@
 
             const cleanNumber = (valStr) => {
                 if (!valStr) return 0;
-                let cleanVal = valStr.toString().replace(/[^\d,.-]/g, '').replace(',', '.');
+                // Gestisce sia formati con virgola che con punto
+                let cleanVal = valStr.toString().replace(/[^\d,.-]/g, '');
+                if (cleanVal.includes(',') && cleanVal.includes('.')) {
+                    cleanVal = cleanVal.replace(/\./g, '').replace(',', '.');
+                } else if (cleanVal.includes(',')) {
+                    cleanVal = cleanVal.replace(',', '.');
+                }
                 return parseFloat(cleanVal) || 0;
+            };
+
+            // Parsing di date in formato GG/MM/AAAA o AAAA-MM-GG per un corretto ordinamento
+            const parseDateForSort = (dateStr) => {
+                if (!dateStr) return 0;
+                const parts = dateStr.split(/[\/\.-]/);
+                if (parts.length === 3) {
+                    if (parts[0].length === 4) { // YYYY-MM-DD
+                        return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+                    } else if (parts[2].length === 4) { // DD/MM/YYYY
+                        return new Date(parts[2], parts[1] - 1, parts[0]).getTime();
+                    }
+                }
+                return Date.parse(dateStr) || 0;
             };
 
             const processUserData = useCallback((rows) => {
@@ -106,18 +204,18 @@
                 const records = rows.map(row => {
                     const prezzo = cleanNumber(row._rawValues[COL_PREZZO]);
                     const acconto = cleanNumber(row._rawValues[COL_ACCONTO]);
-                    const rawSaldato = row._rawValues[COL_SALDATO]?.toUpperCase();
-                    const isSaldato = rawSaldato === 'VERO' || rawSaldato === 'TRUE';
+                    const rawSaldato = (row._rawValues[COL_SALDATO] || '').toUpperCase();
+                    const isSaldato = rawSaldato === 'VERO' || rawSaldato === 'TRUE' || rawSaldato === 'SI' || rawSaldato === 'YES';
                     
                     totalLordo += prezzo;
                     totalAcconti += acconto;
 
-                    const nettoDovuto = prezzo - acconto;
+                    const nettoDovuto = Math.max(0, prezzo - acconto);
                     if (!isSaldato) daPercepire += nettoDovuto;
 
                     return {
                         data: row._rawValues[COL_DATA] || 'N/D',
-                        localita: row._rawValues[COL_LUOGO] || 'N/D',
+                        localita: row._rawValues[COL_LUOGO] || 'Luogo non specificato',
                         nota: row._rawValues[COL_NOTE] || '',
                         prezzo,
                         acconto,
@@ -126,11 +224,12 @@
                     };
                 });
 
-                records.sort((a, b) => b.data.localeCompare(a.data));
+                // Ordinamento decrescente per data (dal più recente al meno recente)
+                records.sort((a, b) => parseDateForSort(b.data) - parseDateForSort(a.data));
 
                 return {
-                    nome: rows[0]._rawValues[COL_NOMINATIVO],
-                    email: rows[0]._rawValues[COL_EMAIL],
+                    nome: rows[0]._rawValues[COL_NOMINATIVO] || 'Musicista',
+                    email: rows[0]._rawValues[COL_EMAIL] || '',
                     lordo: totalLordo,
                     acconti: totalAcconti,
                     netto: daPercepire,
@@ -143,25 +242,46 @@
                 if (!silent) setLoading(true);
                 try {
                     const response = await fetch(`${CSV_URL}&t=${Date.now()}`);
-                    if (!response.ok) throw new Error("Errore nel caricamento del file");
+                    if (!response.ok) throw new Error("Impossibile accedere al foglio Google.");
                     const text = await response.text();
+                    
+                    if (text.includes('<!DOCTYPE html>') || text.includes('google-site-verification')) {
+                        throw new Error("Accesso negato al foglio Google. Verificare i permessi di condivisione.");
+                    }
+
                     const parsed = parseCSV(text);
                     setAllData(parsed);
-                    
-                    if (isLoggedIn && userData) {
-                        const updatedRows = parsed.filter(row => 
-                            (row._rawValues[COL_EMAIL] || "").toLowerCase() === userData.email.toLowerCase()
-                        );
-                        if (updatedRows.length > 0) {
-                            setUserData(processUserData(updatedRows));
-                        }
-                    }
+                    setUsingDemoData(false);
+                    setError(null);
                 } catch (e) {
-                    setError("Errore di connessione al database.");
+                    console.warn("Errore durante il caricamento CSV:", e.message);
+                    if (!silent && allData.length === 0) {
+                        setError("Impossibile connettersi al Google Sheet. Assicurati che il file sia pubblicato sul web.");
+                    }
                 } finally {
-                    setLoading(false);
+                    if (!silent) setLoading(false);
                 }
             };
+
+            const loadDemoData = () => {
+                setAllData(MOCK_DATA);
+                setUsingDemoData(true);
+                setError(null);
+                setLoginInput('mario@music.it');
+                setPasswordInput('1234');
+            };
+
+            // Effetto per aggiornare i dati dell'utente se i dati generali cambiano
+            useEffect(() => {
+                if (isLoggedIn && userData && allData.length > 0) {
+                    const updatedRows = allData.filter(row => 
+                        (row._rawValues[COL_EMAIL] || "").toLowerCase() === userData.email.toLowerCase()
+                    );
+                    if (updatedRows.length > 0) {
+                        setUserData(processUserData(updatedRows));
+                    }
+                }
+            }, [allData, isLoggedIn, processUserData]);
 
             useEffect(() => {
                 const savedEmail = localStorage.getItem('artist_hub_email');
@@ -176,14 +296,14 @@
                 fetchCSV();
                 const interval = setInterval(() => fetchCSV(true), AUTO_REFRESH_TIME);
                 return () => clearInterval(interval);
-            }, [isLoggedIn]);
+            }, []);
 
             const handleLogin = (e) => {
                 e.preventDefault();
                 setError(null);
                 
                 if (allData.length === 0) {
-                    setError("Dati in caricamento, riprova tra un istante...");
+                    setError("Nessun dato caricato. Prova a cliccare su 'Usa Dati Demo' per provare l'app.");
                     return;
                 }
 
@@ -192,7 +312,7 @@
 
                 const userRows = allData.filter(row => {
                     const dbEmail = (row._rawValues[COL_EMAIL] || "").toLowerCase();
-                    const dbPass = row._rawValues[COL_PASSWORD] || "";
+                    const dbPass = (row._rawValues[COL_PASSWORD] || "").toString();
                     return dbEmail === emailInput && dbPass === passInput;
                 });
 
@@ -208,7 +328,7 @@
                     setIsLoggedIn(true);
                     setShowDashboardAmounts(false);
                 } else {
-                    setError("Credenziali non valide.");
+                    setError("Credenziali non valide. Verifica email e password.");
                 }
             };
 
@@ -222,155 +342,350 @@
                 }
             };
 
+            // Schermata Caricamento iniziale
             if (loading && allData.length === 0) return (
-                <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 border-4 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin"></div>
-                    <p className="mt-4 text-emerald-500 font-bold text-[10px] tracking-widest uppercase">Caricamento Artist Hub...</p>
+                <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+                    <div className="relative flex items-center justify-center">
+                        <div className="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
+                        <div className="absolute font-black text-emerald-500 text-xs">AH</div>
+                    </div>
+                    <p className="mt-6 text-emerald-400 font-bold text-xs tracking-[0.2em] uppercase animate-pulse">
+                        Sincronizzazione Artist Hub...
+                    </p>
                 </div>
             );
 
+            // Schermata Login
             if (!isLoggedIn) return (
-                <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
-                    <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px]"></div>
-                    <div className="max-w-md w-full bg-slate-900/40 backdrop-blur-2xl p-10 rounded-[2.5rem] border border-white/5 shadow-2xl relative z-10 animate-fade-in">
-                        <div className="text-center mb-10">
-                            <div className="inline-flex p-3 bg-emerald-500/10 rounded-2xl mb-4 border border-emerald-500/20">
-                                <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" /></svg>
+                <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
+                    {/* Background Light Gradients */}
+                    <div className="absolute top-[-10%] right-[-10%] w-[450px] h-[450px] bg-emerald-500/10 rounded-full blur-[130px] pointer-events-none"></div>
+                    <div className="absolute bottom-[-10%] left-[-10%] w-[450px] h-[450px] bg-teal-500/10 rounded-full blur-[130px] pointer-events-none"></div>
+
+                    <div className="max-w-md w-full glass-dark p-8 sm:p-10 rounded-[2.5rem] shadow-2xl relative z-10 animate-fade-in border border-white/10">
+                        <div className="text-center mb-8">
+                            <div className="inline-flex p-3.5 bg-emerald-500/10 rounded-2xl mb-4 border border-emerald-500/20 shadow-inner">
+                                <svg className="w-7 h-7 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.3" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                                </svg>
                             </div>
-                            <h1 className="text-3xl font-black text-white uppercase tracking-tighter">Artist Hub</h1>
-                            <p className="text-slate-500 text-[10px] font-bold mt-2 uppercase tracking-[0.2em]">Gestione Prestazioni Professionali</p>
+                            <h1 className="text-3xl font-black text-white uppercase tracking-tight">Artist Hub</h1>
+                            <p className="text-slate-400 text-[11px] font-bold mt-2 uppercase tracking-[0.2em]">Gestione Prestazioni & Compensi</p>
                         </div>
-                        <form onSubmit={handleLogin} className="space-y-6">
+
+                        <form onSubmit={handleLogin} className="space-y-5">
                             <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Email</label>
-                                <input type="email" placeholder="latua@email.it" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={loginInput} onChange={e=>setLoginInput(e.target.value)} required />
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Registrata</label>
+                                <input 
+                                    type="email" 
+                                    placeholder="latua@email.it" 
+                                    className="w-full p-4 bg-slate-900/60 border border-slate-700/60 rounded-2xl text-white outline-none focus:border-emerald-500/80 focus:ring-2 ring-emerald-500/20 transition-all placeholder:text-slate-600 text-sm font-medium" 
+                                    value={loginInput} 
+                                    onChange={e => setLoginInput(e.target.value)} 
+                                    required 
+                                />
                             </div>
+
                             <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Password</label>
-                                <input type="password" placeholder="••••••••" className="w-full p-4 bg-slate-800/40 border border-white/5 rounded-2xl text-white outline-none focus:border-emerald-500/40 transition-all" value={passwordInput} onChange={e=>setPasswordInput(e.target.value)} required />
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Password Accesso</label>
+                                <input 
+                                    type="password" 
+                                    placeholder="••••••••" 
+                                    className="w-full p-4 bg-slate-900/60 border border-slate-700/60 rounded-2xl text-white outline-none focus:border-emerald-500/80 focus:ring-2 ring-emerald-500/20 transition-all placeholder:text-slate-600 text-sm font-medium" 
+                                    value={passwordInput} 
+                                    onChange={e => setPasswordInput(e.target.value)} 
+                                    required 
+                                />
                             </div>
-                            <div className="flex items-center gap-3 px-1 cursor-pointer" onClick={()=>setRememberMe(!rememberMe)}>
-                                <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700'}`}>
-                                    {rememberMe && <svg className="w-4 h-4 text-slate-900" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
-                                </div>
-                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight">Ricordami</span>
-                            </div>
-                            {error && <div className="bg-red-500/10 border border-red-500/20 py-3 rounded-xl"><p className="text-red-400 text-[10px] font-black text-center uppercase tracking-wider">{error}</p></div>}
-                            <button className="w-full bg-emerald-500 py-4 rounded-2xl font-black uppercase text-xs tracking-[0.2em] text-slate-950 hover:bg-emerald-400 transition-all">Accedi</button>
-                        </form>
-                    </div>
-                </div>
-            );
 
-            if (view === 'details') return (
-                <div className="min-h-screen bg-slate-50 pb-24 animate-fade-in">
-                    <nav className="glass p-4 flex justify-between items-center sticky top-0 z-50 px-6">
-                        <button onClick={()=>setView('dashboard')} className="p-2 rounded-xl bg-slate-100 text-slate-600 active:scale-90 transition-all">
-                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
-                        </button>
-                        <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">Storico Pagamenti</h2>
-                        <div className="w-9 h-9"></div>
-                    </nav>
-                    <div className="p-4 space-y-4 max-w-2xl mx-auto">
-                        <div className="relative">
-                            <input type="text" placeholder="Cerca luogo..." className="w-full p-4 pl-12 bg-white rounded-2xl border border-slate-200 shadow-sm outline-none focus:ring-2 ring-emerald-500/20" value={filterSearch} onChange={e => setFilterSearch(e.target.value)} />
-                            <svg className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                        </div>
-                        {userData.records.filter(r => r.localita.toLowerCase().includes(filterSearch.toLowerCase())).map((r, i) => (
-                            <div key={i} className={`bg-white rounded-3xl p-5 border border-slate-200 card-shadow transition-opacity ${r.saldato ? 'opacity-50' : ''}`}>
-                                <div className="flex justify-between items-start mb-3">
-                                    <div>
-                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{r.data}</span>
-                                        <h3 className="font-black text-slate-900 uppercase text-sm">{r.localita}</h3>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className={`text-sm font-black ${r.saldato ? 'text-emerald-500' : 'text-slate-900'}`}>
-                                            <DisplayAmount value={r.netto} isSaldato={r.saldato} showAmounts={showDashboardAmounts} />
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex gap-3 text-[10px] font-bold text-slate-500 border-t pt-3 border-slate-50">
-                                    <span>Lordo: <DisplayAmount value={r.prezzo} showAmounts={showDashboardAmounts} /></span>
-                                    <span className="text-amber-600">Acconto: <DisplayAmount value={r.acconto} showAmounts={showDashboardAmounts} /></span>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-
-            return (
-                <div className="min-h-screen bg-slate-50 pb-24 animate-fade-in">
-                    <nav className="glass px-6 py-4 flex justify-between items-center sticky top-0 z-50">
-                        <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xs">A</div>
-                            <span className="font-black text-slate-900 uppercase text-xs">Artist Hub</span>
-                        </div>
-                        <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7" /></svg>
-                        </button>
-                    </nav>
-
-                    <main className="p-5 max-w-2xl mx-auto space-y-6">
-                        <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
-                            <div className="relative z-10">
-                                <h2 className="text-3xl font-black uppercase tracking-tighter mb-1">{userData.nome}</h2>
-                                <p className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mb-8">{userData.email}</p>
-                                <div className="flex gap-4">
-                                    <button onClick={()=>setView('details')} className="flex-1 bg-white text-slate-900 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">Vedi Storico</button>
-                                    <div className="bg-white/5 px-6 rounded-2xl flex flex-col justify-center border border-white/5">
-                                        <span className="text-[7px] font-black text-slate-500 uppercase tracking-tighter">Gigs</span>
-                                        <span className="text-xl font-black text-emerald-400">{userData.prestazioni}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl"></div>
-                        </div>
-
-                        <div className="p-8 rounded-[2.5rem] shadow-xl card-shadow bg-emerald-400 text-slate-900 relative">
-                            <div className="flex justify-between items-start">
-                                <span className="text-[10px] font-black uppercase opacity-60 tracking-widest">Netto da Riscuotere</span>
-                                <button 
-                                    onClick={() => setShowDashboardAmounts(!showDashboardAmounts)} 
-                                    className="p-2 bg-slate-900/10 rounded-xl hover:bg-slate-900/20 transition-all active:scale-90"
+                            <div className="flex items-center justify-between px-1">
+                                <div 
+                                    className="flex items-center gap-3 cursor-pointer select-none group" 
+                                    onClick={() => setRememberMe(!rememberMe)}
                                 >
-                                    {showDashboardAmounts ? (
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                                    ) : (
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>
-                                    )}
+                                    <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${rememberMe ? 'bg-emerald-500 border-emerald-500' : 'border-slate-700 group-hover:border-slate-500'}`}>
+                                        {rememberMe && (
+                                            <svg className="w-3.5 h-3.5 text-slate-950" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                            </svg>
+                                        )}
+                                    </div>
+                                    <span className="text-xs text-slate-400 font-semibold tracking-tight">Ricordami</span>
+                                </div>
+                            </div>
+
+                            {error && (
+                                <div className="bg-red-500/10 border border-red-500/30 p-3.5 rounded-2xl">
+                                    <p className="text-red-400 text-xs font-semibold text-center leading-relaxed">{error}</p>
+                                </div>
+                            )}
+
+                            <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] py-4 rounded-2xl font-black uppercase text-xs tracking-[0.15em] text-slate-950 transition-all shadow-lg shadow-emerald-500/20">
+                                Accedi al Portale
+                            </button>
+                        </form>
+
+                        {/* Pulsante Fallback per testing se il Google Sheet non carica */}
+                        {allData.length === 0 && (
+                            <div className="mt-6 border-t border-slate-800 pt-5 text-center">
+                                <button 
+                                    type="button" 
+                                    onClick={loadDemoData} 
+                                    className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-4"
+                                >
+                                    Carica Dati Dimostrativi (Demo Mode)
                                 </button>
                             </div>
-                            <div className="flex items-center gap-4 my-2">
-                                <p className="text-5xl font-black tracking-tighter">
-                                    <DisplayAmount value={userData.netto} isBlurrable={true} showAmounts={showDashboardAmounts} />
+                        )}
+                    </div>
+                </div>
+            );
+
+            // Vista Dettagli / Storico Pagamenti
+            if (view === 'details') {
+                const filteredRecords = userData.records.filter(r => {
+                    const matchesSearch = 
+                        r.localita.toLowerCase().includes(filterSearch.toLowerCase()) ||
+                        r.nota.toLowerCase().includes(filterSearch.toLowerCase()) ||
+                        r.data.includes(filterSearch);
+                    
+                    if (filterStatus === 'pending') return matchesSearch && !r.saldato;
+                    if (filterStatus === 'paid') return matchesSearch && r.saldato;
+                    return matchesSearch;
+                });
+
+                return (
+                    <div className="min-h-screen bg-slate-50 pb-28 animate-fade-in">
+                        {/* Header Navbar */}
+                        <nav className="glass p-4 flex justify-between items-center sticky top-0 z-50 px-6">
+                            <button 
+                                onClick={() => setView('dashboard')} 
+                                className="p-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 active:scale-95 transition-all shadow-sm flex items-center gap-1 font-bold text-xs"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" /></svg>
+                                <span>Home</span>
+                            </button>
+                            <h2 className="text-xs font-black text-slate-900 uppercase tracking-widest">Storico Prestazioni</h2>
+                            <button 
+                                onClick={() => setShowDashboardAmounts(!showDashboardAmounts)} 
+                                className="p-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 active:scale-95 transition-all shadow-sm"
+                                title="Mostra/Nascondi Importi"
+                            >
+                                <EyeIcon show={showDashboardAmounts} />
+                            </button>
+                        </nav>
+
+                        <div className="p-4 sm:p-6 space-y-4 max-w-2xl mx-auto">
+                            {/* Barra di ricerca */}
+                            <div className="relative">
+                                <input 
+                                    type="text" 
+                                    placeholder="Cerca per luogo, note o data..." 
+                                    className="w-full p-4 pl-11 bg-white rounded-2xl border border-slate-200 shadow-sm outline-none focus:ring-2 ring-emerald-500/30 text-sm font-medium transition-all" 
+                                    value={filterSearch} 
+                                    onChange={e => setFilterSearch(e.target.value)} 
+                                />
+                                <svg className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                            </div>
+
+                            {/* Filtri rapidi per stato */}
+                            <div className="flex gap-2">
+                                {[
+                                    { id: 'all', label: 'Tutti' },
+                                    { id: 'pending', label: 'Da Saldare' },
+                                    { id: 'paid', label: 'Saldati' }
+                                ].map(st => (
+                                    <button
+                                        key={st.id}
+                                        onClick={() => setFilterStatus(st.id)}
+                                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                                            filterStatus === st.id 
+                                                ? 'bg-slate-900 text-white shadow' 
+                                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        {st.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Lista Record */}
+                            {filteredRecords.length === 0 ? (
+                                <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 card-shadow my-8">
+                                    <p className="text-slate-400 font-bold text-sm">Nessuna prestazione trovata.</p>
+                                </div>
+                            ) : (
+                                filteredRecords.map((r, i) => (
+                                    <div 
+                                        key={i} 
+                                        className={`bg-white rounded-3xl p-5 border border-slate-200 card-shadow transition-all ${r.saldato ? 'bg-slate-50/60' : ''}`}
+                                    >
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div>
+                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{r.data}</span>
+                                                <h3 className="font-black text-slate-900 uppercase text-sm mt-0.5">{r.localita}</h3>
+                                                {r.nota && <p className="text-xs text-slate-500 font-medium mt-1">{r.nota}</p>}
+                                            </div>
+                                            <div className="text-right">
+                                                {r.saldato ? (
+                                                    <DisplayAmount value={r.netto} isSaldato={true} />
+                                                ) : (
+                                                    <div>
+                                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter block">Netto Dovuto</span>
+                                                        <div className="text-base font-black text-slate-900">
+                                                            <DisplayAmount 
+                                                                value={r.netto} 
+                                                                isBlurrable={true} 
+                                                                showAmounts={showDashboardAmounts} 
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex gap-4 text-xs font-bold text-slate-500 border-t pt-3 border-slate-100 mt-2">
+                                            <span>Lordo: <DisplayAmount value={r.prezzo} isBlurrable={true} showAmounts={showDashboardAmounts} /></span>
+                                            <span className="text-amber-600">Acconto: <DisplayAmount value={r.acconto} isBlurrable={true} showAmounts={showDashboardAmounts} /></span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        {/* Navigation Bar in Basso */}
+                        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+                            <div className="glass px-8 py-3.5 rounded-full flex items-center gap-10 card-shadow border border-white/80 shadow-xl">
+                                <button 
+                                    onClick={() => setView('dashboard')} 
+                                    className={`p-1.5 transition-all ${view === 'dashboard' ? 'text-emerald-600 scale-125' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" /></svg>
+                                </button>
+                                <button 
+                                    onClick={() => setView('details')} 
+                                    className={`p-1.5 transition-all ${view === 'details' ? 'text-emerald-600 scale-125' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Vista Dashboard Principale
+            return (
+                <div className="min-h-screen bg-slate-50 pb-28 animate-fade-in">
+                    {/* Header Top Navbar */}
+                    <nav className="glass px-6 py-4 flex justify-between items-center sticky top-0 z-50">
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xs shadow-md">
+                                A
+                            </div>
+                            <span className="font-black text-slate-900 uppercase text-xs tracking-wider">Artist Hub</span>
+                        </div>
+                        <button 
+                            onClick={handleLogout} 
+                            className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-xl hover:bg-slate-100"
+                            title="Disconnetti"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M17 16l4-4m0 0l-4-4m4 4H7" /></svg>
+                        </button>
+                    </nav>
+
+                    <main className="p-4 sm:p-6 max-w-2xl mx-auto space-y-5">
+                        {usingDemoData && (
+                            <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-2xl text-amber-700 font-bold text-xs text-center">
+                                Mode Demo Attiva: Visualizzazione dati di test locali.
+                            </div>
+                        )}
+
+                        {/* Profilo Artista Card */}
+                        <div className="bg-slate-900 rounded-[2.5rem] p-7 sm:p-8 text-white shadow-2xl relative overflow-hidden">
+                            <div className="relative z-10">
+                                <h2 className="text-2xl sm:text-3xl font-black uppercase tracking-tight mb-1">{userData.nome}</h2>
+                                <p className="text-slate-400 font-semibold text-xs tracking-wide mb-6">{userData.email}</p>
+                                <div className="flex gap-3">
+                                    <button 
+                                        onClick={() => setView('details')} 
+                                        className="flex-1 bg-white hover:bg-slate-100 text-slate-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider active:scale-[0.98] transition-all shadow-md"
+                                    >
+                                        Vedi Storico
+                                    </button>
+                                    <div className="bg-white/10 px-5 rounded-2xl flex flex-col justify-center border border-white/10 text-center">
+                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider">Date</span>
+                                        <span className="text-lg font-black text-emerald-400">{userData.prestazioni}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="absolute top-0 right-0 w-40 h-40 bg-emerald-500/15 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl pointer-events-none"></div>
+                        </div>
+
+                        {/* Card Netto da Riscuotere */}
+                        <div className="p-7 sm:p-8 rounded-[2.5rem] card-shadow bg-gradient-to-br from-emerald-400 to-teal-400 text-slate-950 relative overflow-hidden">
+                            <div className="flex justify-between items-start">
+                                <span className="text-xs font-black uppercase opacity-75 tracking-widest">Netto da Riscuotere</span>
+                                <button 
+                                    onClick={() => setShowDashboardAmounts(!showDashboardAmounts)} 
+                                    className="p-2.5 bg-slate-950/10 hover:bg-slate-950/20 rounded-xl transition-all active:scale-95 text-slate-950"
+                                    title="Attiva/Disattiva Visibilità Importi"
+                                >
+                                    <EyeIcon show={showDashboardAmounts} />
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-4 my-3">
+                                <p className="text-4xl sm:text-5xl font-black tracking-tight">
+                                    <DisplayAmount 
+                                        value={userData.netto} 
+                                        isBlurrable={true} 
+                                        showAmounts={showDashboardAmounts} 
+                                    />
                                 </p>
                             </div>
-                            <span className="text-[8px] font-bold uppercase opacity-50 block mt-4">Calcolato su prestazioni non saldate</span>
+                            <span className="text-[10px] font-bold uppercase opacity-65 block mt-2">
+                                Calcolato su prestazioni non ancora saldate
+                            </span>
                         </div>
                         
+                        {/* Summary Grid */}
                         <div className="grid grid-cols-2 gap-4">
                             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 card-shadow text-center">
-                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Lordo Totale</span>
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Lordo Totale</span>
                                 <p className="text-lg font-black text-slate-900">
-                                    <DisplayAmount value={userData.lordo} isBlurrable={true} showAmounts={showDashboardAmounts} />
+                                    <DisplayAmount 
+                                        value={userData.lordo} 
+                                        isBlurrable={true} 
+                                        showAmounts={showDashboardAmounts} 
+                                    />
                                 </p>
                             </div>
                             <div className="bg-white p-6 rounded-[2rem] border border-slate-200 card-shadow text-center">
-                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tot. Acconti</span>
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tot. Acconti</span>
                                 <p className="text-lg font-black text-amber-600">
-                                    <DisplayAmount value={userData.acconti} isBlurrable={true} showAmounts={showDashboardAmounts} />
+                                    <DisplayAmount 
+                                        value={userData.acconti} 
+                                        isBlurrable={true} 
+                                        showAmounts={showDashboardAmounts} 
+                                    />
                                 </p>
                             </div>
                         </div>
                     </main>
 
+                    {/* Navigation Bar in Basso */}
                     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
-                        <div className="glass px-8 py-4 rounded-full flex items-center gap-10 card-shadow border border-white/50">
-                            <button onClick={()=>setView('dashboard')} className={`p-1 transition-all ${view === 'dashboard' ? 'text-emerald-600 scale-125' : 'text-slate-400'}`}>
+                        <div className="glass px-8 py-3.5 rounded-full flex items-center gap-10 card-shadow border border-white/80 shadow-xl">
+                            <button 
+                                onClick={() => setView('dashboard')} 
+                                className={`p-1.5 transition-all ${view === 'dashboard' ? 'text-emerald-600 scale-125' : 'text-slate-400 hover:text-slate-600'}`}
+                            >
                                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" /></svg>
                             </button>
-                            <button onClick={()=>setView('details')} className={`p-1 transition-all ${view === 'details' ? 'text-emerald-600 scale-125' : 'text-slate-400'}`}>
+                            <button 
+                                onClick={() => setView('details')} 
+                                className={`p-1.5 transition-all ${view === 'details' ? 'text-emerald-600 scale-125' : 'text-slate-400 hover:text-slate-600'}`}
+                            >
                                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" /></svg>
                             </button>
                         </div>
